@@ -1,0 +1,4 @@
+Flask
+jsonify
+requests
+google-genai
