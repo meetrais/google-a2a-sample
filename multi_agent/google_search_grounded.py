@@ -8,6 +8,11 @@ from google.genai.types import Tool, GenerateContentConfig, GoogleSearch
 import os
 from dotenv import load_dotenv
 
+# --- CHANGE TO ABSOLUTE IMPORT ---
+from common_types import Task, TaskStatus, Message, TextPart, TaskState
+# --- END CHANGE ---
+
+
 load_dotenv()
 
 # ... HOST, PORT, BASE_URL definitions ...
@@ -52,7 +57,7 @@ def handle_task():
         if not task_id:
              return jsonify({"error": "Missing task ID"}), 400
 
-        system_prompt="Respond to user queries by adding happy emojis to the response. Add as many happy emojis as you can. "
+        system_prompt="Perform Google search and return grounded response to user's question"
         user_message = system_prompt + task.get("message", {}).get("parts", [{}])[0].get("text", "")
         
         Gemini_API_Key = os.getenv("Gemini_API_Key")
@@ -79,24 +84,38 @@ def handle_task():
         else:
             reply_text = "No results found."
 
-        # Construct the agent's reply message
-        agent_reply_message = {
-            "role": "agent",
-            "parts": [{"text": reply_text}]
-        }
+        # --- USE PYDANTIC MODELS ---
+        # Construct the agent's reply message using models
+        agent_reply_message = Message(
+            role="agent",
+            parts=[TextPart(text=reply_text)] # Use TextPart model
+        )
 
+        # Construct the TaskStatus using models
+        task_status = TaskStatus(
+            state=TaskState.COMPLETED, # Use TaskState enum
+            message=agent_reply_message
+        )
+
+        # Construct the Task object structure using models
+        task_result_payload = Task(
+             id=task_id,
+             sessionId=task.get("sessionId"), # Pass session ID back if received
+             status=task_status,
+             # artifacts=[], # Optional: Initialize if needed
+             # history=[], # Optional: Initialize if needed
+             # metadata={} # Optional: Initialize if needed
+        )
+
+        # Construct the full JSONRPCResponse structure
+        # Pydantic models will be automatically serialized to JSON by jsonify
         response_payload = {
-            "id": task_id,
-            "status": {
-                "state": "completed",
-                "message": agent_reply_message # Put the reply message here
-            },
-            # Include history if needed by the Task model, otherwise omit 'messages'
-            # "messages": [
-            #     task.get("message", {}), # Original request
-            #     agent_reply_message      # Agent's reply
-            # ]
+            "jsonrpc": "2.0",
+            "id": task.get("metadata", {}).get("jsonrpc_id", task_id), # Try to reuse JSON-RPC ID if sent, else task_id
+            "result": task_result_payload.model_dump(exclude_none=True) # Serialize the Task model
         }
+        # --- END USE PYDANTIC MODELS ---
+
         print(f"  Sending Response Payload: {response_payload}")
         return jsonify(response_payload), 200  # 200 OK
 

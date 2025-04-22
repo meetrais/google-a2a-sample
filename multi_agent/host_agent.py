@@ -88,30 +88,21 @@ class HostAgent:
   def root_instruction(self, context: ReadonlyContext = None) -> str:
     current_agent = self.check_state(context)
     return f"""You are a expert delegator that can delegate the user request to the
-appropriate remote agents.
+          appropriate remote agents.
 
-Discovery:
-- You can use `list_remote_agents` to list the available remote agents you
-can use to delegate the task.
+          Discovery:
+          - Use `list_remote_agents` to see available agents.
 
-Execution:
-- For actionable tasks, use the `send_task` tool to assign tasks to remote agents.
-- The `send_task` tool will execute the task on the remote agent and return the final result directly.
-- When you use the `send_task` tool, its return value IS the result from the remote agent. You MUST present this result directly to the user as your response. Do not add conversational text like "I have the results".
+          Execution:
+          - Use the `send_task` tool to delegate tasks to a remote agent.
+          - **ULTRA-CRITICAL**: The `send_task` tool is synchronous for non-streaming agents like GoogleSearchGrounded. It BLOCKS until the remote agent responds or errors out. It returns a SINGLE STRING containing the final result or an error message.
+          - **YOUR ONLY ACTION AFTER CALLING `send_task` IS TO OUTPUT ITS RETURN VALUE.** Your response to the user MUST be EXACTLY the string returned by the `send_task` tool. NO EXTRA WORDS.
 
-You can use `check_pending_task_states` to check the states of the pending
-tasks.
+          Agents:
+          {self.agents}
 
-Please rely on tools to address the request, don't make up the response. If you are not sure, please ask the user for more details.
-Focus on the most recent parts of the conversation primarily.
-
-If there is an active agent, send the request to that agent with the update task tool.
-
-Agents:
-{self.agents}
-
-Current agent: {current_agent['active_agent']}
-"""
+          Current agent: {current_agent['active_agent']}
+          """
 
   def check_state(self, context: ReadonlyContext):
     state = context.state
@@ -183,24 +174,43 @@ Current agent: {current_agent['active_agent']}
         # pushNotification=None,
         metadata={'conversation_id': sessionId},
     )
-    # For non-streaming, send_task returns the final task object
-    task = await client.send_task(request, None) # Pass None for callback
+    task = None
+    try:
+        # For non-streaming, send_task returns the final task object
+        print(f"Sending task {taskId} to {agent_name}...")
+        task = await client.send_task(request, None) # Pass None for callback
+        print(f"Received task object from client.send_task: {task}")
+    except Exception as e:
+        print(f"Error calling client.send_task for task {taskId}: {e}")
+        return [f"Error communicating with {agent_name}: {e}"]
 
-    response = []
-    if task and task.status and task.status.message:
-      # Extract results directly from the final task object
-      response.extend(self.convert_parts(task.status.message.parts, tool_context))
-    elif task and task.status:
-       response.append(f"Task completed with status: {task.status.state}")
-    else:
-       response.append(f"Task sent to {agent_name}, but no response message received.")
-
-    if task and task.artifacts:
-      for artifact in task.artifacts:
-        response.extend(self.convert_parts(artifact.parts, tool_context))
-
-    # Join the list into a single string response
-    return "\n".join(map(str, response)) if response else "No response content received from agent."
+    # Process the response from the remote agent
+    try:
+        if task and task.status and task.status.message:
+            print(f"Task {taskId} successful, extracting results from status.message...")
+            results_list = self.convert_parts(task.status.message.parts, tool_context)
+            # Handle potential artifacts as well if necessary
+            if task.artifacts:
+                 print(f"Task {taskId} has artifacts, processing...")
+                 for artifact in task.artifacts:
+                     # Assuming artifacts also contain text or convertible data
+                     results_list.extend(self.convert_parts(artifact.parts, tool_context))
+            # Return the combined results as a single string
+            final_result = "\n".join(map(str, results_list)) if results_list else f"Task completed but no text content found for {agent_name}."
+            print(f"send_task returning: {final_result}")
+            return final_result
+        elif task and task.status:
+            error_msg = f"Task failed or completed without results from {agent_name}. Status: {task.status.state}"
+            print(f"send_task returning error: {error_msg}")
+            return error_msg
+        else:
+            error_msg = f"Failed to get a valid response structure from {agent_name} after sending task (Task object: {task})."
+            print(f"send_task returning error: {error_msg}")
+            return error_msg
+    except Exception as e:
+        error_msg = f"Error processing response for task {taskId}: {e}"
+        print(f"send_task returning error: {error_msg}")
+        return error_msg
 
   # Removed get_task_result method
   # Removed task_callback method
