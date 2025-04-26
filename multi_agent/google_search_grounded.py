@@ -15,6 +15,9 @@ from common_types import Task, TaskStatus, Message, TextPart, TaskState
 
 load_dotenv()
 
+Gemini_API_Key = os.getenv("Gemini_API_Key")
+client = genai.Client(api_key=Gemini_API_Key)
+
 # ... HOST, PORT, BASE_URL definitions ...
 HOST = '127.0.0.1'
 PORT = 5000
@@ -59,9 +62,6 @@ def handle_task():
 
         system_prompt="Perform Google search and return grounded response to user's question"
         user_message = system_prompt + task.get("message", {}).get("parts", [{}])[0].get("text", "")
-        
-        Gemini_API_Key = os.getenv("Gemini_API_Key")
-        client = genai.Client(api_key=Gemini_API_Key)
 
         google_search_tool = Tool(
             google_search = GoogleSearch()
