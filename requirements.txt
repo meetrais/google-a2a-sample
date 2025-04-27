@@ -2,3 +2,4 @@ Flask
 jsonify
 requests
 google-genai
+google-adk
